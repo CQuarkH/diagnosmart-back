@@ -1,7 +1,16 @@
+import base64
+import glob
+from pathlib import Path
+import re
+import shutil
+import subprocess
 import bcrypt
+import cv2
 from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Form
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+import numpy as np
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
 from jose import JWTError, jwt
@@ -16,6 +25,9 @@ import io
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
+
+from dotenv import load_dotenv
+load_dotenv()
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'your_secret_key_here')
 if not SECRET_KEY:
@@ -305,32 +317,70 @@ def is_xray_image(image_bytes: bytes) -> bool:
     except Exception as e:
         print(f"Error verificando imagen: {e}")
         return False
+class AnalysisResult:
+        def __init__(self, success: bool, processed_image: Optional[np.ndarray] = None, angles: Optional[list] = None):
+            self.success = success
+            self.has_risk = False
+            self.processed_image = processed_image
+            self.angles = angles if angles is not None else []
+            
 
-def analyze_xray(image_bytes: bytes, patient_age: int, patient_gender: str, doctor_observations: str) -> str:
-    """
-    Función simulada de análisis de radiografía.
-    En producción, aquí iría tu modelo de ML para análisis médico.
-    """
-    # Análisis simulado basado en los datos proporcionados
-    analysis = f"""
-    ANÁLISIS DE RADIOGRAFÍA
-    
-    Datos del paciente:
-    - Edad: {patient_age} años
-    - Sexo: {patient_gender}
-    
-    Observaciones médicas: {doctor_observations}
-    
-    Análisis automatizado:
-    - Imagen verificada como radiografía válida
-    - Calidad de imagen: Buena
-    - Estructuras anatómicas visibles
-    
-    NOTA: Este es un análisis automatizado preliminar.
-    Requiere validación por profesional médico.
-    """
-    
-    return analysis
+def analyze_xray_via_cli(path, patient_age: int, patient_gender: str, doctor_observations: str) -> AnalysisResult:
+    input_path = Path(path)
+    base_name = input_path.stem 
+
+    proc = subprocess.run(
+        ["python3", "analisis_caninos_final2.py", str(input_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    log = proc.stdout or proc.stderr
+    if proc.returncode != 0:
+        raise RuntimeError(f"Error: {log}")
+
+    # 2) Buscar el archivo de salida con glob
+    resultados_dir = Path("pruebas_modelo")
+    pattern = str(resultados_dir / f"{base_name}_*.jpg")
+    matches = glob.glob(pattern)
+    if not matches:
+        raise FileNotFoundError(f"No se encontró ningún resultado para {base_name} en {resultados_dir}")
+    # Si hay varios, nos quedamos con el último (más reciente)
+    output_path = Path(sorted(matches)[-1])
+
+    # 3) Parsear la info del nombre:
+    #    nombre = base_name_izq12.3R_der05.6N_NORMAL.jpg
+    regex = re.compile(
+        rf"^{re.escape(base_name)}_"
+        r"izq(?P<ang_izq>\d+\.\d+)(?P<r_izq>[RN])_"
+        r"der(?P<ang_der>\d+\.\d+)(?P<r_der>[RN])_"
+        r"(?P<estado>RIESGO|NORMAL)\.jpg$"
+    )
+    m = regex.match(output_path.name)
+    if not m:
+        raise ValueError(f"Nombre de archivo inesperado: {output_path.name}")
+
+    ang_izq = float(m.group("ang_izq"))
+    riesgo_izq = (m.group("r_izq") == "R")
+    ang_der = float(m.group("ang_der"))
+    riesgo_der = (m.group("r_der") == "R")
+    estado_general = (m.group("estado") == "RIESGO")
+
+    # 4) Preparamos la lista de ángulos con su riesgo
+    angles_data = [
+        {"side": "izq", "angle": ang_izq, "at_risk": riesgo_izq},
+        {"side": "der", "angle": ang_der, "at_risk": riesgo_der},
+    ]
+
+    # 5) Leemos la imagen resultante
+    image_bytes_out = output_path.read_bytes()
+
+    # 6) Devolvemos todos los datos en el AnalysisResult
+    return AnalysisResult(
+        success=True,
+        processed_image=image_bytes_out,
+        angles=angles_data,
+    )
 
 @app.on_event("startup")
 async def startup_event():
@@ -399,66 +449,61 @@ async def analyze_xray_endpoint(
     current_user = Depends(get_current_user)
 ):
     """Analizar radiografía con verificación de imagen"""
-    
-    # Verificar que el archivo sea una imagen
+
+    # 1) Validaciones básicas
     if not file.content_type.startswith('image/'):
-        raise HTTPException(status_code=400, detail="El archivo debe ser una imagen")
-    
-    # Leer el contenido del archivo
-    image_bytes = await file.read()
-    
-    # Verificar que sea una radiografía
-    if not is_xray_image(image_bytes):
-        raise HTTPException(
-            status_code=400, 
-            detail="La imagen no parece ser una radiografía válida"
-        )
-    
-    # Validar datos del paciente
+        raise HTTPException(400, "El archivo debe ser una imagen")
     if patient_age < 0 or patient_age > 150:
-        raise HTTPException(status_code=400, detail="Edad del paciente inválida")
-    
+        raise HTTPException(400, "Edad del paciente inválida")
     if patient_gender.upper() not in ["M", "F"]:
-        raise HTTPException(status_code=400, detail="Género debe ser: M o F")
-    
-    connection = get_db_connection()
-    cursor = connection.cursor()
-    
+        raise HTTPException(400, "Género debe ser: M o F")
+
+    # 2) Leer bytes y guardarlos directamente
+    image_bytes = await file.read()
+    # if not is_xray_image(image_bytes):
+    #     raise HTTPException(400, "La imagen no parece ser una radiografía válida")
+
+    uploads_dir = Path("uploads")
+    uploads_dir.mkdir(exist_ok=True)
+    ext = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
+    filename = f"{current_user[0]}_{datetime.now():%Y%m%d_%H%M%S}.{ext}"
+    file_path = uploads_dir / filename
+    file_path.write_bytes(image_bytes)
+
+    try: 
+        analysis = analyze_xray_via_cli(str(file_path), patient_age, patient_gender.upper(), doctor_observations)
+        if not analysis.success:
+            raise HTTPException(500, "Error en el análisis de la radiografía")
+    except RuntimeError as e:
+        raise HTTPException(500, f"{e}")
+
+    # 4) Guardar metadata en BD (sin volver a codificar la imagen)
+    conn = get_db_connection()
+    cur = conn.cursor()
     try:
-        # Guardar imagen
-        file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
-        filename = f"{current_user[0]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{file_extension}"
-        file_path = os.path.join("uploads", filename)
-        
-        with open(file_path, "wb") as f:
-            f.write(image_bytes)
-        
-        # Realizar análisis
-        analysis_result = analyze_xray(image_bytes, patient_age, patient_gender.upper(), doctor_observations)
-        
-        # Guardar en base de datos
-        cursor.execute("""
-            INSERT INTO xray_analyses 
-            (user_id, patient_age, patient_gender, doctor_observations, image_path, analysis_result)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (current_user[0], patient_age, patient_gender.upper(), doctor_observations, file_path, analysis_result))
-        
-        analysis_id = cursor.lastrowid
-        connection.commit()
-        
-        return {
-            "message": "Radiografía analizada exitosamente",
-            "analysis_id": analysis_id,
-            "analysis_result": analysis_result
-        }
-        
-    except Error as e:
-        print(f"Error procesando radiografía: {e}")
-        connection.rollback()
-        raise HTTPException(status_code=500, detail=f"Error procesando la radiografía: {str(e)}")
+        cur.execute("""
+            INSERT INTO xray_analyses
+            (user_id, patient_age, patient_gender, doctor_observations, image_path)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (current_user[0], patient_age, patient_gender.upper(), doctor_observations, str(file_path)))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error guardando en BD: {e}")
     finally:
-        cursor.close()
-        connection.close()
+        cur.close()
+        conn.close()
+
+    # 5) Preparar la imagen resultante como Base64
+    #    Aquí asumimos que analysis.processed_image ya es un `bytes` JPEG
+    img_b64 = base64.b64encode(analysis.processed_image).decode('utf-8')
+    data_uri = f"data:image/jpeg;base64,{img_b64}"
+
+    # 6) Responder
+    return JSONResponse({
+        "image": data_uri,
+        "summary": analysis.angles,
+    })
 
 @app.post("/feedback")
 async def submit_feedback(

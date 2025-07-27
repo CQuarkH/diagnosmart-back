@@ -10,3 +10,6 @@ Pillow==10.1.0
 numpy==1.25.2
 torch
 torchvision
+pandas
+requests
+seaborn
