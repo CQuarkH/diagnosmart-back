@@ -323,7 +323,7 @@ class AnalysisResult:
             self.has_risk = False
             self.processed_image = processed_image
             self.angles = angles if angles is not None else []
-            
+
 
 def analyze_xray_via_cli(path, patient_age: int, patient_gender: str, doctor_observations: str) -> AnalysisResult:
     input_path = Path(path)
