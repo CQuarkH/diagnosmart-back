@@ -36,6 +36,7 @@ ALGORITHM = os.getenv('ALGORITHM', 'HS256')
 if not ALGORITHM:
     raise ValueError("No se ha definido la variable de entorno ALGORITHM")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES', 30))
+API_PORT = int(os.getenv('API_PORT', 33110))
 
 DB_CONFIG = {
     'host': os.getenv('DB_HOST', 'localhost'),
@@ -579,4 +580,4 @@ async def get_user_analyses(current_user = Depends(get_current_user)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=API_PORT)
