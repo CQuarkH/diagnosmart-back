@@ -388,7 +388,7 @@ async def startup_event():
     init_db()
     os.makedirs("uploads", exist_ok=True)
 
-@app.post("/auth/register", response_model=dict)
+@app.post("/api/auth/register", response_model=dict)
 async def register_user(user: UserRegister, _: int = Depends(get_current_user)):
     """Registrar un nuevo usuario"""
     connection = get_db_connection()
@@ -420,7 +420,7 @@ async def register_user(user: UserRegister, _: int = Depends(get_current_user)):
         cursor.close()
         connection.close()
 
-@app.post("/auth/login", response_model=User)
+@app.post("/api/auth/login", response_model=User)
 async def login(user: UserLogin):
     """Iniciar sesión y obtener token JWT"""
     db_user = get_user_by_email(user.username)
@@ -441,7 +441,7 @@ async def login(user: UserLogin):
         "token": access_token
     }
 
-@app.post("/analyze")
+@app.post("/api/analyze")
 async def analyze_xray_endpoint(
     file: UploadFile = File(...),
     patient_age: int = Form(...),
@@ -506,7 +506,7 @@ async def analyze_xray_endpoint(
         "summary": analysis.angles,
     })
 
-@app.post("/feedback")
+@app.post("/api/feedback")
 async def submit_feedback(
     analysis_id: int = Form(...),
     feedback: str = Form(...),
@@ -540,7 +540,7 @@ async def submit_feedback(
         cursor.close()
         connection.close()
 
-@app.get("/analyses")
+@app.get("/api/analyses")
 async def get_user_analyses(current_user = Depends(get_current_user)):
     """Obtener historial de análisis del usuario"""
     connection = get_db_connection()
