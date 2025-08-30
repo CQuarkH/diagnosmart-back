@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import bcrypt
 import cv2
-from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, Depends, File, Request, UploadFile, Form
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,6 +59,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Maneja todas las excepciones no específicas como error desconocido"""
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "No se detectaron las piezas dentales. Por favor, intente nuevamente.",
+            "type": "unknown_error"
+        }
+    )
 
 # Configuración de seguridad
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

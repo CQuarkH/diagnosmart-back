@@ -455,10 +455,14 @@ nombre_partes = [base_name]
 if angulo_izquierdo is not None:
     riesgo_str = "R" if riesgo_izquierdo else "N"
     nombre_partes.append(f"izq{abs(angulo_izquierdo):.1f}{riesgo_str}")
+else:
+    nombre_partes.append(f"izq0.0N")
 
 if angulo_derecho is not None:
     riesgo_str = "R" if riesgo_derecho else "N"
     nombre_partes.append(f"der{abs(angulo_derecho):.1f}{riesgo_str}")
+else:
+    nombre_partes.append(f"der0.0N")
 
 # Determinar riesgo general
 riesgo_general = riesgo_izquierdo or riesgo_derecho
