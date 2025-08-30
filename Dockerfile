@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.10-slim-bullseye
 
 # Instalar dependencias del sistema incluyendo las necesarias para OpenCV
 RUN apt-get update && \
